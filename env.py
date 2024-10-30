@@ -12,19 +12,22 @@ class HealthcareManipulationEnv(gym.Env):
         super(HealthcareManipulationEnv, self).__init__()
         
         
-        self.physicsClient = p.connect(p.GUI)
+        self.physicsClient = p.connect(p.DIRECT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
         
         # Load environment assets
         self.planeId = p.loadURDF("plane.urdf")
         self.tableId = p.loadURDF("table/table.urdf", basePosition=[0, 0, 0])
-        self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, -0.5, 0.6], useFixedBase=True)
-        
+        self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0.6], useFixedBase=True)
+        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.7, 0, 0.65])
+
         # Define action and observation spaces
         self.action_space = spaces.Box(low=-1, high=1, shape=(8,), dtype=np.float64)  # 7-DoF + gripper control
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float64)
-
+        
+        self.max_steps = 100
+        self.current_step = 0
         # Reset environment
         self.reset()
 
@@ -35,8 +38,9 @@ class HealthcareManipulationEnv(gym.Env):
         self.planeId = p.loadURDF("plane.urdf")
         self.tableId = p.loadURDF("table/table.urdf", basePosition=[0, 0, 0])
         self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0.6], useFixedBase=True)
-        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.3, 0, 0.65])
+        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.7, 0, 0.65])
 
+        self.current_step = 0
         # Initial observation
         return self._get_obs(), {}
 
@@ -44,7 +48,10 @@ class HealthcareManipulationEnv(gym.Env):
         # Apply action
         joint_positions = action[:7]  # first 7 values for the robot joints
         gripper_action = action[7]    # last value for gripper control
-        
+
+        self.contacts = p.getContactPoints(self.robotId, self.bottleId)
+        self.gripper_joint_indices = [9, 10]
+
         for i in range(7):
             p.setJointMotorControl2(self.robotId, i, p.POSITION_CONTROL, targetPosition=joint_positions[i])
 
@@ -63,9 +70,12 @@ class HealthcareManipulationEnv(gym.Env):
         # Compute reward
         reward = self._compute_reward()
         done = self._is_done()
+        self.current_step += 1  # Increment step count
+        truncated = self.current_step >= self.max_steps
         info = {}
+        
 
-        return obs, reward, done, done, info
+        return obs, reward, done, truncated, info
 
     def _get_obs(self):
         # Return observation
@@ -75,19 +85,49 @@ class HealthcareManipulationEnv(gym.Env):
         return obs
 
     def _compute_reward(self):
-        # Calculate reward based on distance and task success
+        # Get positions for end-effector and bottle
         end_effector_pos = p.getLinkState(self.robotId, 11)[0]
         bottle_pos, _ = p.getBasePositionAndOrientation(self.bottleId)
         distance = np.linalg.norm(np.array(end_effector_pos) - np.array(bottle_pos))
-        
-        # Reward for closer distance and successful grasping
-        reward = -distance
+
+        # Proximity Reward: Reward for moving close to the bottle
+        proximity_reward = -distance
         if distance < 0.05:  # Successful grasping threshold
-            reward += 1.0
-        return reward
+            proximity_reward += 1.0  # Additional reward for very close proximity
+
+        # Grasping Reward: Check if gripper is closed and in contact with the bottle
+        gripper_closed = np.all([p.getJointState(self.robotId, idx)[0] < 0.02 for idx in self.gripper_joint_indices])
+        grasp_reward = 0
+        if gripper_closed and len(self.contacts) > 0:
+            grasp_reward = 20.0  # Significant reward for successful grasping
+
+        # Lifting Reward: Reward for lifting the bottle above a certain height
+        self.lift_threshold = 0.7  # Define lift threshold
+        lifting_reward = 0
+        if bottle_pos[2] > self.lift_threshold:
+            lifting_reward = 15.0  # Base reward for lifting
+            if bottle_pos[2] > self.lift_threshold + 0.1:  # Reward for lifting higher
+                lifting_reward += 10.0
+
+        # Total reward
+        total_reward = proximity_reward + grasp_reward + lifting_reward
+
+        return total_reward
 
     def _is_done(self):
-        # Here we must define a termination state. Im not sure if after a certain amount of episodes? If robot grasps object? both?
+        bottle_position, _ = p.getBasePositionAndOrientation(self.bottleId)
+        # 1. what do we want the robot to do for this object?
+        if bottle_position[2] > 1:
+            print("Episode done: Successfully lifted the object!")
+            return True
+
+        # # 2. Check if maximum steps have been reached since we for sure dont want it taking longer than this
+        # if self.current_step >= self.max_steps:
+        #     print("Episode done: Reached maximum steps without success.")
+        #     return True
+
+        # 3. Optional: Add more conditions if needed (e.g., detecting collisions or failures)
+
         return False
 
     def render(self, mode="rgb_array"):
