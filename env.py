@@ -11,8 +11,8 @@ class HealthcareManipulationEnv(gym.Env):
     def __init__(self):
         super(HealthcareManipulationEnv, self).__init__()
         
-        # Initialize PyBullet
-        self.physicsClient = p.connect(p.GUI)  # Use GUI for visualization
+        
+        self.physicsClient = p.connect(p.GUI)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         p.setGravity(0, 0, -9.81)
         
@@ -87,19 +87,19 @@ class HealthcareManipulationEnv(gym.Env):
         return reward
 
     def _is_done(self):
-        # Define termination condition
+        # Here we must define a termination state. Im not sure if after a certain amount of episodes? If robot grasps object? both?
         return False
 
     def render(self, mode="rgb_array"):
         if mode == "rgb_array":
-            # Define camera settings
+            
             view_matrix = p.computeViewMatrix(cameraEyePosition=[1, 1, 1], cameraTargetPosition=[0, 0, 0], cameraUpVector=[0, 0, 1])
             projection_matrix = p.computeProjectionMatrixFOV(fov=60, aspect=1, nearVal=0.1, farVal=100.0)
             
-            # Capture image
+            
             width, height, rgbImg, depthImg, segImg = p.getCameraImage(width=320, height=320, viewMatrix=view_matrix, projectionMatrix=projection_matrix)
             
-            # Return RGB image array
+            
             return np.array(rgbImg)
         else:
             super().render(mode=mode)
