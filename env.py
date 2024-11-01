@@ -20,13 +20,13 @@ class HealthcareManipulationEnv(gym.Env):
         self.planeId = p.loadURDF("plane.urdf")
         self.tableId = p.loadURDF("table/table.urdf", basePosition=[0, 0, 0])
         self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0.6], useFixedBase=True)
-        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.7, 0, 0.65])
+        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.8, 0, 0.65])
 
         # Define action and observation spaces
         self.action_space = spaces.Box(low=-1, high=1, shape=(8,), dtype=np.float64)  # 7-DoF + gripper control
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float64)
         
-        self.max_steps = 100
+        self.max_steps = 50
         self.current_step = 0
         # Reset environment
         self.reset()
@@ -37,11 +37,14 @@ class HealthcareManipulationEnv(gym.Env):
         p.setGravity(0, 0, -9.81)
         self.planeId = p.loadURDF("plane.urdf")
         self.tableId = p.loadURDF("table/table.urdf", basePosition=[0, 0, 0])
-        self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[0, 0, 0.6], useFixedBase=True)
-        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[0.7, 0, 0.65])
+        self.robotId = p.loadURDF("franka_panda/panda.urdf", basePosition=[-0.2, 0, 0.6], useFixedBase=True)
+        
+        # Randomly place the bottle within a specified range
+        bottle_x = np.random.uniform(0.2, 0.6)  # Adjust range based on environment
+        bottle_y = np.random.uniform(-0.2, 0.2)  # Adjust range based on environment
+        self.bottleId = p.loadURDF("small_bottle.urdf", basePosition=[bottle_x, bottle_y, 0.65])
 
         self.current_step = 0
-        # Initial observation
         return self._get_obs(), {}
 
     def step(self, action):
@@ -109,8 +112,14 @@ class HealthcareManipulationEnv(gym.Env):
             if bottle_pos[2] > self.lift_threshold + 0.1:  # Reward for lifting higher
                 lifting_reward += 10.0
 
+        # Encourage movement in joint 6 (wrist rotation) after a certain number of steps  
+        joint6_reward = 0      
+        if self.current_step > 30:
+            joint_6_position = p.getJointState(self.robotId, 6)[0]
+            joint_6_movement_reward = -np.abs(joint_6_position) * 0.1  # Penalize lack of movement in joint 6
+            joint6_reward += joint_6_movement_reward
         # Total reward
-        total_reward = proximity_reward + grasp_reward + lifting_reward
+        total_reward = proximity_reward + grasp_reward + lifting_reward + joint6_reward
 
         return total_reward
 
